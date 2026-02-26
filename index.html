@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Firebase Realtime Database - HTML Demo</title>
+  <style>
+    body { font-family: Arial, sans-serif; max-width: 900px; margin: 30px auto; padding: 0 16px; }
+    h1 { margin-bottom: 6px; }
+    .muted { color: #666; margin-top: 0; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 16px; margin: 16px 0; }
+    input, textarea { width: 100%; padding: 10px; margin: 6px 0 12px; border: 1px solid #ccc; border-radius: 8px; }
+    button { padding: 10px 14px; border: 0; border-radius: 10px; cursor: pointer; }
+    button.primary { background: #111; color: #fff; }
+    button.gray { background: #eee; }
+    button.danger { background: #e53935; color: #fff; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; }
+    .row > button { flex: 1; min-width: 120px; }
+    ul { list-style: none; padding: 0; }
+    li { border: 1px solid #eee; border-radius: 12px; padding: 12px; margin: 10px 0; }
+    .meta { color: #777; font-size: 12px; margin-top: 6px; }
+    .actions { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+  <h1>Realtime Posts (Firebase RTDB)</h1>
+  <p class="muted">Add a post and watch it update live (even across multiple browsers/devices).</p>
+
+  <div class="card">
+    <h3 id="formTitle">Create Post</h3>
+    <input id="name" type="text" placeholder="Your name (e.g., Raf)" />
+    <textarea id="message" rows="4" placeholder="Your message..."></textarea>
+
+    <div class="row">
+      <button class="primary" id="saveBtn">Save</button>
+      <button class="gray" id="cancelBtn" style="display:none;">Cancel Edit</button>
+    </div>
+
+    <p class="muted" id="status"></p>
+  </div>
+
+  <div class="card">
+    <h3>Live Feed</h3>
+    <ul id="posts"></ul>
+  </div>
+
+  <!-- Firebase (Realtime Database) using ES Modules -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
+    import {
+      getDatabase,
+      ref,
+      push,
+      onValue,
+      update,
+      remove,
+      serverTimestamp,
+      query,
+      orderByChild
+    } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-database.js";
+
+    // ✅ 1) REPLACE with your Firebase config (Project settings → Your apps → Web app)
+    const firebaseConfig = {
+  apiKey: "AIzaSyA3z10gUmgKDE1hHUVTLjDxTnklVl47B-M",
+  authDomain: "real-time-database-a4d77.firebaseapp.com",
+  databaseURL: "https://real-time-database-a4d77-default-rtdb.firebaseio.com",
+  projectId: "real-time-database-a4d77",
+  storageBucket: "real-time-database-a4d77.firebasestorage.app",
+  messagingSenderId: "909941182655",
+  appId: "1:909941182655:web:b42b88d424986815ab360a"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+
+    // UI elements
+    const nameEl = document.getElementById("name");
+    const messageEl = document.getElementById("message");
+    const postsEl = document.getElementById("posts");
+    const statusEl = document.getElementById("status");
+    const saveBtn = document.getElementById("saveBtn");
+    const cancelBtn = document.getElementById("cancelBtn");
+    const formTitle = document.getElementById("formTitle");
+
+    let editingId = null;
+
+    function setStatus(msg) {
+      statusEl.textContent = msg;
+      setTimeout(() => statusEl.textContent = "", 2500);
+    }
+
+    function resetForm() {
+      editingId = null;
+      formTitle.textContent = "Create Post";
+      saveBtn.textContent = "Save";
+      cancelBtn.style.display = "none";
+      nameEl.value = "";
+      messageEl.value = "";
+    }
+
+    cancelBtn.addEventListener("click", resetForm);
+
+    // ✅ 2) CREATE or UPDATE post
+    saveBtn.addEventListener("click", async () => {
+      const name = nameEl.value.trim();
+      const message = messageEl.value.trim();
+
+      if (!name || !message) {
+        setStatus("Please enter both name and message.");
+        return;
+      }
+
+      try {
+        if (editingId) {
+          // Update existing
+          await update(ref(db, `posts/${editingId}`), {
+            name,
+            message
+          });
+          setStatus("Post updated!");
+          resetForm();
+        } else {
+          // Create new
+          await push(ref(db, "posts"), {
+            name,
+            message,
+            createdAt: serverTimestamp()
+          });
+          setStatus("Post added!");
+          nameEl.value = "";
+          messageEl.value = "";
+        }
+      } catch (err) {
+        console.error(err);
+        setStatus("Error: " + err.message);
+      }
+    });
+
+    // ✅ 3) READ posts in real-time (live updates)
+    // orderByChild("createdAt") works once timestamps resolve; we also render safely if null.
+    const postsQuery = query(ref(db, "posts"), orderByChild("createdAt"));
+
+    onValue(postsQuery, (snapshot) => {
+      postsEl.innerHTML = "";
+
+      const data = snapshot.val();
+      if (!data) {
+        postsEl.innerHTML = "<li>No posts yet.</li>";
+        return;
+      }
+
+      // Convert object -> array and sort newest first for nicer UI
+      const list = Object.entries(data).map(([id, post]) => ({ id, ...post }));
+      list.sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0));
+
+      for (const post of list) {
+        const li = document.createElement("li");
+
+        const createdText = post.createdAt
+          ? new Date(post.createdAt).toLocaleString()
+          : "just now";
+
+        li.innerHTML = `
+          <strong>${escapeHtml(post.name ?? "")}</strong>
+          <div>${escapeHtml(post.message ?? "")}</div>
+          <div class="meta">Posted: ${createdText}</div>
+          <div class="actions">
+            <button class="gray" data-action="edit" data-id="${post.id}">Edit</button>
+            <button class="danger" data-action="delete" data-id="${post.id}">Delete</button>
+          </div>
+        `;
+
+        postsEl.appendChild(li);
+      }
+    });
+
+    // ✅ 4) Handle Edit/Delete clicks (event delegation)
+    postsEl.addEventListener("click", async (e) => {
+      const btn = e.target.closest("button");
+      if (!btn) return;
+
+      const action = btn.dataset.action;
+      const id = btn.dataset.id;
+      if (!action || !id) return;
+
+      if (action === "edit") {
+        // Load current values once (from DOM is fine, but we’ll grab from DB quickly)
+        // simplest: find post data by reading current snapshot? We'll just prompt user from DB.
+        // We'll do a quick one-time read using onValue + off is more code; instead we edit using text in DOM:
+        const li = btn.closest("li");
+        const name = li.querySelector("strong")?.textContent ?? "";
+        const message = li.querySelector("div")?.textContent ?? "";
+
+        editingId = id;
+        formTitle.textContent = "Edit Post";
+        saveBtn.textContent = "Update";
+        cancelBtn.style.display = "inline-block";
+        nameEl.value = name;
+        messageEl.value = message;
+        window.scrollTo({ top: 0, behavior: "smooth" });
+      }
+
+      if (action === "delete") {
+        const ok = confirm("Delete this post?");
+        if (!ok) return;
+
+        try {
+          await remove(ref(db, `posts/${id}`));
+          setStatus("Post deleted!");
+          if (editingId === id) resetForm();
+        } catch (err) {
+          console.error(err);
+          setStatus("Error: " + err.message);
+        }
+      }
+    });
+
+    // Basic XSS-safe output
+    function escapeHtml(str) {
+      return String(str)
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+  </script>
+</body>
+</html>
